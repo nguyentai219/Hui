@@ -1,0 +1,187 @@
+/* ============================================
+   QUẢN LÝ HỤI - CSS
+   Version: 18.3 | Optimized
+   ============================================ */
+
+/* === BASE === */
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --blue-primary: #1d4ed8;
+  --blue-dark: #1e3a8a;
+  --blue-mid: #2563eb;
+  --green: #16a34a;
+  --red: #dc2626;
+  --orange: #ea580c;
+  --slate-bg: #f1f5f9;
+  --white: #fff;
+  --shadow-card: 0 4px 24px rgba(30,58,138,0.10);
+  --radius-card: 1.25rem;
+  --radius-modal: 2rem;
+}
+
+body {
+  background: var(--slate-bg);
+  min-height: 100vh;
+  color: #1e293b;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* === HUI CARDS === */
+.hui-card {
+  border-radius: var(--radius-card);
+  transition: transform 0.15s ease, opacity 0.2s ease, background 0.2s ease;
+  background: var(--white);
+  cursor: pointer;
+  position: relative;
+  border-width: 2px;
+  border-style: solid;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.hui-card:active { transform: scale(0.97); }
+.card-song { border-color: #22c55e; }
+.card-chet { border-color: var(--red); }
+
+/* === ĐÃ ĐÓNG OVERLAY === */
+.da-dong {
+  opacity: 0.6 !important;
+  background: #f8fafc !important;
+}
+.stamp-done {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 110px; height: 52px;
+  border: 3.5px solid #059669;
+  color: #059669;
+  font-weight: 900;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.82);
+  z-index: 50;
+  pointer-events: none;
+  transform: translate(-50%, -50%) rotate(-14deg);
+}
+.stamp-done::after { content: "ĐÃ ĐÓNG"; }
+
+/* === MỐC TRÒN "HỐT" === */
+.moc-tron-red {
+  width: 52px; height: 52px;
+  border: 3.5px double #b91c1c;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 11px;
+  transform: rotate(-18deg);
+  color: #b91c1c;
+  background: var(--white);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+/* === WINNER PULSE === */
+@keyframes hot-pulse {
+  0%,100% { border-color: var(--orange); background: #fff7ed; }
+  50%      { border-color: #f97316;      background: #ffedd5; }
+}
+.is-winner-active {
+  animation: hot-pulse 2s infinite;
+  border-width: 3px;
+}
+
+/* === STATUS BADGE === */
+.status-badge {
+  position: absolute;
+  top: 0; left: 0;
+  padding: 2px 24px;
+  font-size: 8px;
+  font-weight: 900;
+  transform: rotate(-20deg) translate(-12px, -4px);
+  text-transform: uppercase;
+  color: var(--white);
+  z-index: 20;
+  letter-spacing: 0.06em;
+}
+.badge-song { background: var(--green); }
+.badge-chet { background: var(--red); }
+.badge-hot  { background: var(--orange); }
+
+/* === DROPDOWN GỢI Ý === */
+.custom-dropdown {
+  display: none;
+  position: absolute;
+  left: 0; right: 0; top: 100%;
+  background: var(--white);
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+  border-radius: 0.75rem;
+  margin-top: 0.25rem;
+  z-index: 110;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.custom-dropdown div {
+  transition: background 0.1s;
+}
+.custom-dropdown div:active { background: #eff6ff; }
+
+/* === MODALS === */
+.modal-base {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 100;
+  display: flex;
+}
+.modal-base.hidden { display: none; }
+
+/* === MARQUEE - tên dây hụi chạy nếu dài === */
+.marquee-wrapper {
+  overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+  width: 100%;
+}
+.marquee-text {
+  display: inline-block;
+  white-space: nowrap;
+}
+.marquee-text.scrolling {
+  animation: marquee-scroll 14s linear infinite;
+}
+@keyframes marquee-scroll {
+  0%   { transform: translateX(60%); }
+  100% { transform: translateX(-110%); }
+}
+
+/* === MARQUEE trong card - chỉ địa chỉ === */
+.card-marquee-wrapper {
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.card-marquee-text {
+  display: inline-block;
+  white-space: nowrap;
+}
+.card-marquee-text.scrolling {
+  animation: card-marquee-scroll 12s linear infinite;
+}
+@keyframes card-marquee-scroll {
+  0%   { transform: translateX(30%); }
+  100% { transform: translateX(-110%); }
+}
+
+.truncate-1 {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

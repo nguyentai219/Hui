@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1d4ed8">
+  <meta name="description" content="Ứng dụng quản lý dây hụi đơn giản, lưu trữ offline và Google Drive">
+
+  <!-- PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Quản Lý Hụi">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/icon-16.png">
+  <link rel="shortcut icon" href="favicon.ico">
+
+  <title>Quản Lý Hụi</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
+
+  <!-- ===================== SCREEN: HOME ===================== -->
+  <div id="screen-home">
+    <header class="bg-blue-700 text-white p-10 text-center rounded-b-[3rem] shadow-xl">
+      <h1 class="text-3xl font-black uppercase italic tracking-tighter">Quản Lý Hụi V18.3</h1>
+
+      <!-- Hàng 1: Local backup -->
+      <div class="mt-4 flex justify-center gap-2">
+        <button onclick="exportData()"
+          class="text-[10px] bg-blue-800 px-4 py-2 rounded-full border border-blue-500 font-bold uppercase">
+          📤 Sao lưu
+        </button>
+        <label class="text-[10px] bg-blue-800 px-4 py-2 rounded-full border border-blue-500 font-bold uppercase cursor-pointer">
+          📥 Khôi phục
+          <input type="file" accept=".json" class="hidden" onchange="importData(event)">
+        </label>
+      </div>
+
+      <!-- Hàng 2: Google Drive -->
+      <div class="mt-3 flex justify-center gap-2">
+        <button id="btn-drive-login" onclick="driveLogin()"
+          class="text-[10px] bg-white/20 px-4 py-2 rounded-full border border-white/40 font-bold uppercase flex items-center gap-1">
+          <img src="https://www.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" class="w-4 h-4">
+          Đăng nhập Drive
+        </button>
+        <button id="btn-drive-save" onclick="driveSave()"
+          class="hidden text-[10px] bg-green-600 px-4 py-2 rounded-full border border-green-400 font-bold uppercase">
+          ☁️ Lưu Drive
+        </button>
+        <button id="btn-drive-load" onclick="driveLoad()"
+          class="hidden text-[10px] bg-yellow-500 px-4 py-2 rounded-full border border-yellow-300 font-bold uppercase text-slate-900">
+          📂 Tải Drive
+        </button>
+        <button id="btn-drive-logout" onclick="driveLogout()"
+          class="hidden text-[10px] bg-white/10 px-3 py-2 rounded-full border border-white/30 font-bold uppercase">
+          🚪
+        </button>
+      </div>
+      <p id="drive-user-info" class="mt-2 text-[9px] text-blue-200 font-bold hidden"></p>
+      <p id="drive-sync-status" class="hidden text-[9px] font-bold mt-1"></p>
+    </header>
+
+    <div id="hui-list-container" class="p-6 space-y-4"></div>
+
+    <button onclick="showModal('modal-create')"
+      class="fixed bottom-10 right-8 bg-blue-600 text-white w-16 h-16 rounded-full shadow-2xl text-4xl font-bold z-50 flex items-center justify-center">
+      +
+    </button>
+  </div>
+
+  <!-- ===================== SCREEN: DETAIL ===================== -->
+  <div id="screen-detail" class="hidden">
+    <header class="bg-blue-600 text-white sticky top-0 z-50 shadow-md">
+      <div class="flex items-center justify-between p-4 pb-2">
+        <button onclick="goHome()" class="text-2xl p-2" title="Trang chủ">🏠</button>
+        <div class="flex-1 mx-2 text-center overflow-hidden">
+          <div class="marquee-wrapper">
+            <h2 id="current-hui-name" class="font-black uppercase italic text-lg text-white marquee-text"></h2>
+          </div>
+        </div>
+        <div class="flex gap-1.5">
+          <button onclick="showHistoryManager()"
+            class="bg-blue-800 px-2.5 py-2 rounded-xl text-[10px] font-bold uppercase italic text-white">
+            Lịch sử
+          </button>
+          <button onclick="showMemberPopup()" class="bg-blue-800 p-2.5 rounded-xl text-sm">👥</button>
+          <button onclick="showSettingsPopup()" class="bg-slate-800 p-2.5 rounded-xl text-sm text-white">⚙️</button>
+        </div>
+      </div>
+
+      <div class="bg-blue-700 px-4 py-3 border-t border-blue-500/50 text-[11px] font-bold uppercase">
+        <div class="flex justify-between mb-2">
+          <div class="flex items-center gap-2 italic">
+            <span id="info-next-date" class="text-blue-100"></span>
+            <span id="countdown" class="text-yellow-400 font-black px-1 rounded"></span>
+          </div>
+          <div>Tiến độ: <span id="display-progress" class="text-white font-black"></span></div>
+        </div>
+        <div class="flex justify-between pt-2 border-t border-blue-600/50">
+          <span class="text-green-300 italic">
+            Đã thu: <span id="display-collected" class="font-black text-white">0đ</span>
+          </span>
+          <span class="text-red-300 italic">
+            Thăm kỳ này: <span id="display-bid-header" class="font-black text-white">0đ</span>
+          </span>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-member-list" class="p-4 space-y-3 pb-28"></main>
+  </div>
+
+  <!-- ===================== MODAL: MEMBERS ===================== -->
+  <div id="modal-members" class="hidden fixed inset-0 bg-black/60 flex items-end z-[100]">
+    <div class="bg-white w-full rounded-t-[2.5rem] p-6 h-[85vh] flex flex-col shadow-inner">
+      <h2 class="font-black text-center mb-4 uppercase text-sm italic border-b pb-2 text-blue-800">
+        DANH SÁCH HỘI VIÊN
+      </h2>
+
+      <div class="bg-slate-50 p-4 rounded-2xl border-2 border-blue-100 mb-4 space-y-3 relative">
+        <div class="relative">
+          <input id="mem-name" autocomplete="off" type="text"
+            oninput="handleInputSuggest(this,'name')"
+            placeholder="Tên hội viên (*)"
+            class="w-full p-3 rounded-xl font-bold uppercase text-sm border outline-none focus:border-blue-500">
+          <div id="name-dropdown" class="custom-dropdown"></div>
+        </div>
+
+        <input id="mem-phone" type="tel" placeholder="Số điện thoại"
+          class="w-full p-3 rounded-xl text-sm border outline-none font-bold">
+
+        <div class="relative">
+          <input id="mem-address" autocomplete="off" type="text"
+            oninput="handleInputSuggest(this,'address')"
+            placeholder="Địa chỉ"
+            class="w-full p-3 rounded-xl text-sm border outline-none font-bold focus:border-blue-500">
+          <div id="address-dropdown" class="custom-dropdown"></div>
+        </div>
+
+        <div id="member-actions-add">
+          <button onclick="addOrUpdateMember()"
+            class="w-full bg-blue-600 text-white py-4 rounded-xl font-black uppercase text-xs">
+            ➕ Thêm mới
+          </button>
+        </div>
+
+        <div id="member-actions-edit" class="hidden flex gap-2">
+          <button onclick="saveEditMember()"
+            class="flex-1 bg-green-600 text-white py-4 rounded-xl font-black uppercase text-xs">✔ Lưu</button>
+          <button onclick="deleteCurrentEditMember()"
+            class="flex-1 bg-red-600 text-white py-4 rounded-xl font-black uppercase text-xs">🗑 Xóa</button>
+          <button onclick="resetMemberForm()"
+            class="flex-1 bg-slate-400 text-white py-4 rounded-xl font-black uppercase text-xs">✕ Hủy</button>
+        </div>
+      </div>
+
+      <div id="popup-member-list" class="flex-1 overflow-y-auto space-y-2 pr-1"></div>
+
+      <button onclick="hideModal('modal-members')"
+        class="mt-4 p-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase text-xs w-full">
+        Hoàn tất
+      </button>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: SETTINGS ===================== -->
+  <div id="modal-settings" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
+    <div class="bg-white w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl">
+      <h2 class="font-black mb-4 text-blue-800 uppercase italic border-b-2 border-blue-100 pb-2 text-center text-sm tracking-tighter">
+        THIẾT LẬP KỲ HỐT
+      </h2>
+
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-white p-3 rounded-xl border-2 border-red-100">
+            <label id="set-bid-label" class="text-[8px] font-black text-red-500 uppercase block">Tiền thăm kỳ này</label>
+            <input id="set-bid" type="text" inputmode="numeric" oninput="formatMoneyOnFly(this)"
+              class="w-full bg-transparent font-black text-lg text-red-600 outline-none" placeholder="0">
+          </div>
+          <div class="bg-white p-3 rounded-xl border-2 border-slate-100">
+            <label class="text-[8px] font-black text-slate-500 uppercase block">Tiền Cò</label>
+            <input id="set-commission" type="text" inputmode="numeric" oninput="formatMoneyOnFly(this)"
+              class="w-full bg-transparent font-black text-lg text-slate-700 outline-none" placeholder="0">
+          </div>
+        </div>
+
+        <div class="bg-blue-50 p-3 rounded-xl border-2 border-blue-200">
+          <label class="text-[8px] font-black text-blue-600 uppercase block mb-1">Người hốt kỳ này</label>
+          <select id="set-winner"
+            class="w-full bg-transparent font-black text-blue-900 uppercase outline-none text-sm"></select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 pt-4 border-t border-slate-100">
+          <div class="bg-slate-50 p-3 rounded-xl">
+            <label class="text-[8px] font-black text-slate-400 uppercase block">Đang kỳ hụi</label>
+            <p id="set-cur-ky" class="font-black text-xl text-slate-600">1</p>
+          </div>
+          <div class="bg-slate-50 p-3 rounded-xl">
+            <label class="text-[8px] font-black text-slate-400 uppercase block">Chu kỳ (ngày)</label>
+            <input id="set-cycle" type="number" min="1"
+              class="w-full font-black text-xl outline-none bg-transparent">
+          </div>
+        </div>
+
+        <div class="bg-slate-50 p-3 rounded-xl">
+          <label class="text-[8px] font-black text-slate-400 uppercase block">Ngày hốt kỳ này</label>
+          <input id="set-date" type="date"
+            class="w-full bg-transparent font-bold text-sm outline-none">
+        </div>
+      </div>
+
+      <div class="flex gap-2 mt-6">
+        <button onclick="hideModal('modal-settings')"
+          class="flex-1 p-4 text-slate-400 font-bold uppercase text-[10px]">Hủy</button>
+        <button id="btn-save-settings"
+          class="flex-1 bg-blue-600 text-white p-4 rounded-xl font-black uppercase text-xs shadow-lg">
+          Cập nhật
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: CONFIRM PAY ===================== -->
+  <div id="modal-confirm-pay" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[200] p-6">
+    <div class="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl text-center">
+      <p id="conf-label" class="text-blue-500 font-black uppercase text-[10px] mb-4 italic"></p>
+      <p id="conf-name" class="font-black text-2xl uppercase mb-2 text-slate-800"></p>
+      <div class="bg-blue-50 p-5 rounded-2xl my-4 border">
+        <p id="conf-sublabel" class="hidden text-[9px] font-black text-orange-500 uppercase mb-1 tracking-widest">THỰC NHẬN</p>
+        <p id="conf-amount" class="text-3xl font-black text-blue-600"></p>
+      </div>
+      <div class="flex gap-3">
+        <button onclick="hideModal('modal-confirm-pay')"
+          class="flex-1 py-4 bg-slate-100 rounded-xl font-black text-[10px] uppercase">Đóng</button>
+        <button id="btn-confirm-action"
+          class="flex-1 py-4 text-white rounded-xl font-black text-[10px] uppercase shadow-lg"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: CREATE HUI ===================== -->
+  <div id="modal-create" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[100]">
+    <div class="bg-white w-full max-w-sm rounded-[2rem] p-8 shadow-2xl">
+      <h2 class="text-sm font-black mb-6 uppercase text-center border-b pb-2 text-blue-800">MỞ DÂY HỤI MỚI</h2>
+      <div class="space-y-4">
+        <input id="new-hui-name" type="text" placeholder="Tên dây hụi..."
+          class="w-full p-4 bg-slate-50 border rounded-xl font-bold uppercase outline-none focus:border-blue-500">
+        <input id="new-hui-base" type="text" inputmode="numeric" oninput="formatMoneyOnFly(this)"
+          placeholder="Tiền cơ sở (vốn)..."
+          class="w-full p-4 bg-slate-50 border rounded-xl font-bold outline-none focus:border-blue-500">
+        <button onclick="createNewHui()"
+          class="w-full bg-blue-600 text-white p-5 rounded-xl font-black uppercase shadow-lg">
+          ✅ Xác nhận
+        </button>
+        <button onclick="hideModal('modal-create')"
+          class="w-full p-3 text-slate-400 font-bold uppercase text-xs">Hủy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: HISTORY ===================== -->
+  <div id="modal-history-manager" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
+    <div class="bg-white w-full max-w-sm rounded-[2rem] p-6 shadow-2xl">
+      <h2 class="font-black mb-4 uppercase border-b pb-2 text-center text-sm tracking-widest text-blue-800">
+        LỊCH SỬ CÁC KỲ
+      </h2>
+      <div id="history-edit-list" class="space-y-2 max-h-80 overflow-y-auto pr-1"></div>
+      <button onclick="state.backEditIdx=null; updateUI(); hideModal('modal-history-manager')"
+        class="w-full mt-4 p-4 bg-blue-100 text-blue-600 font-black rounded-xl uppercase text-xs">
+        Xem kỳ hiện tại
+      </button>
+      <button onclick="hideModal('modal-history-manager')"
+        class="w-full mt-2 p-4 bg-slate-100 text-slate-500 font-black rounded-xl uppercase text-xs">
+        Đóng
+      </button>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: UNPAID WARNING ===================== -->
+  <div id="modal-unpaid-warning" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-[300] p-6">
+    <div class="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl text-center">
+      <div class="text-5xl mb-4">⚠️</div>
+      <p class="text-red-600 font-black uppercase text-sm mb-2">CHƯA THU ĐỦ TIỀN!</p>
+      <p class="text-slate-600 font-bold text-sm mb-4">
+        Còn thiếu <span id="unpaid-count" class="text-red-600 font-black"></span> người chưa đóng:
+      </p>
+      <div class="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6 text-left max-h-48 overflow-y-auto">
+        <pre id="unpaid-names" class="text-red-700 font-black text-xs uppercase whitespace-pre-wrap leading-6"></pre>
+      </div>
+      <p class="text-slate-400 text-[10px] font-bold uppercase mb-4 italic">Vui lòng thu đủ trước khi chốt kỳ</p>
+      <button onclick="hideModal('modal-unpaid-warning')"
+        class="w-full py-4 bg-red-600 text-white rounded-xl font-black uppercase text-xs shadow-lg">
+        Đã hiểu — Quay lại
+      </button>
+    </div>
+  </div>
+
+  <!-- ===================== MODAL: GENERIC CONFIRM ===================== -->
+  <div id="modal-generic-confirm" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-[400] p-6">
+    <div class="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl text-center">
+      <div class="text-4xl mb-4">🤔</div>
+      <p id="generic-confirm-msg" class="font-black text-slate-800 text-base mb-6 leading-snug"></p>
+      <div class="flex gap-3">
+        <button onclick="hideModal('modal-generic-confirm')"
+          class="flex-1 py-4 bg-slate-100 text-slate-500 rounded-xl font-black text-[10px] uppercase">Hủy</button>
+        <button id="generic-confirm-btn"
+          class="flex-1 py-4 text-white rounded-xl font-black text-[10px] uppercase"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/drive.js"></script>
+  <script>
+    // Đăng ký Service Worker (PWA offline)
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
