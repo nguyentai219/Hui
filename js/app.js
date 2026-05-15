@@ -44,36 +44,41 @@ const formatC = (n) => Math.abs(Number(n)).toLocaleString("vi-VN") + "đ";
 const parseC  = (v) => (v ? Number(v.toString().replace(/\D/g, "")) : 0);
 const fmtD    = (d) => (d ? d.split("-").reverse().join("/") : "--/--");
 
-// Dùng sự kiện "input" với cursor cực kỳ chính xác
 function formatMoneyOnFly(el) {
-  const sel = el.selectionStart;
-  const raw = el.value;
+  const raw    = el.value;
+  const sel    = el.selectionStart;
   const digits = raw.replace(/\D/g, "");
 
   if (!digits) { el.value = ""; return; }
 
-  // Đếm số digit trước con trỏ (để tái định vị sau khi format)
+  // Đếm bao nhiêu digit nằm TRƯỚC con trỏ
   const digitsBeforeCursor = raw.slice(0, sel).replace(/\D/g, "").length;
 
   const formatted = Number(digits).toLocaleString("vi-VN").replace(/,/g, ".");
   el.value = formatted;
 
-  // Tìm vị trí con trỏ mới: sau digitsBeforeCursor chữ số từ trái
-  let count = 0;
-  let newPos = formatted.length; // fallback: cuối chuỗi
-  for (let i = 0; i < formatted.length; i++) {
-    if (/\d/.test(formatted[i])) count++;
-    if (count === digitsBeforeCursor) {
-      // Nhảy qua các dấu chấm/phẩy ngay sau vị trí này
-      newPos = i + 1;
-      // Nếu ký tự kế tiếp là dấu phân cách, lùi 1
-      break;
+  // Tìm vị trí con trỏ mới sao cho số digit bên trái = digitsBeforeCursor
+  let count  = 0;
+  let newPos = formatted.length; // mặc định: cuối chuỗi
+
+  if (digitsBeforeCursor === 0) {
+    // Xóa số đầu tiên → con trỏ ở trước chữ số đầu tiên
+    newPos = formatted.search(/\d/); // vị trí digit đầu tiên
+    if (newPos < 0) newPos = 0;
+  } else {
+    for (let i = 0; i < formatted.length; i++) {
+      if (/\d/.test(formatted[i])) {
+        count++;
+        if (count === digitsBeforeCursor) {
+          newPos = i + 1;
+          break;
+        }
+      }
     }
   }
-  // Nếu digitsBeforeCursor = 0 thì đặt về đầu
-  if (digitsBeforeCursor === 0) newPos = 0;
 
-  el.setSelectionRange(newPos, newPos);
+  // Dùng setTimeout để tránh browser reset cursor sau khi set value
+  setTimeout(() => el.setSelectionRange(newPos, newPos), 0);
 }
 
 // ============================================================
@@ -219,6 +224,7 @@ function openHui(id) {
   sessionStorage.setItem("hui_cur_id", id);
   showScreen("detail");
   updateUI();
+  setTimeout(updateDetailDriveIcon, 200);
 }
 
 function goHome() {
@@ -339,11 +345,27 @@ function renderMain() {
     const badgeText  = isWin ? "ĐANG HỐT" : isDead ? "HỤI CHẾT" : "HỤI SỐNG";
     const cardClass  = isWin ? "is-winner-active" : isDead ? "card-chet" : "card-song";
     const payColor   = isWin ? "text-orange-600" : "text-slate-700";
-    const hasSettings = data.winnerId && data.bid > 0;
-    const payLabel = isWin ? "THỰC NHẬN"
-      : m.hasPaid ? "XONG ✅"
-      : hasSettings ? "CẦN THU"
-      : "";
+    const hasSettings = !!(data.winnerId && (data.bid > 0 || isLastMember(h)));
+
+    // Số tiền hiển thị
+    let displayAmt = null;
+    let payLabel   = "";
+
+    if (isWin) {
+      displayAmt = pay;
+      payLabel   = "THỰC NHẬN";
+    } else if (isDead) {
+      // Hụi chết luôn hiện số tiền gốc (không cần chờ kêu)
+      displayAmt = h.baseAmount;
+      payLabel   = m.hasPaid ? "XONG ✅" : "CẦN ĐÓNG";
+    } else if (hasSettings) {
+      displayAmt = pay;
+      payLabel   = m.hasPaid ? "XONG ✅" : "CẦN THU";
+    } else {
+      // Hụi sống, chưa kêu
+      displayAmt = null;
+      payLabel   = "ĐANG CHỜ KÊU";
+    }
 
     html += `
     <div ondblclick="handleMemberClick(${m.id})"
@@ -354,17 +376,19 @@ function renderMain() {
         <div class="card-marquee-wrapper">
           <p class="card-marquee-text uppercase text-lg font-black text-blue-900 leading-tight" data-marquee>${escHtml(m.name)}${deadBidText}</p>
         </div>
-        <div class="flex items-center gap-1 mt-1 text-[10px] font-bold text-slate-500 italic overflow-hidden">
-          ${m.phone ? `<span class="shrink-0">📞 ${escHtml(m.phone)}</span>` : ""}
-          ${m.phone && m.address ? `<span class="shrink-0 opacity-40">·</span>` : ""}
-          ${m.address ? `<span class="card-marquee-wrapper flex-1"><span class="card-marquee-text" data-marquee>📍 ${escHtml(m.address)}</span></span>` : ""}
-          ${!m.phone && !m.address ? `<span class="opacity-40">---</span>` : ""}
+        <div class="flex items-center gap-1 mt-1 overflow-hidden">
+          ${m.phone ? `<span class="card-marquee-wrapper shrink-0 max-w-[45%]"><span class="card-marquee-text text-[10px] font-bold text-slate-500 italic" data-marquee>📞 ${escHtml(m.phone)}</span></span>` : ""}
+          ${m.phone && m.address ? `<span class="text-[10px] text-slate-300 shrink-0">·</span>` : ""}
+          ${m.address ? `<span class="card-marquee-wrapper flex-1 min-w-0"><span class="card-marquee-text text-[10px] font-bold text-slate-500 italic" data-marquee>📍 ${escHtml(m.address)}</span></span>` : ""}
+          ${!m.phone && !m.address ? `<span class="text-[10px] text-slate-400 italic opacity-40">---</span>` : ""}
         </div>
       </div>
       ${isWin ? '<div class="moc-tron-red">HỐT</div>' : ""}
       <div class="text-right shrink-0 ml-2">
-        <p class="text-lg font-black ${payColor}">${(hasSettings || isWin || m.hasPaid) ? formatC(pay) : "---"}</p>
-        ${payLabel ? `<p class="text-[9px] font-bold opacity-50 uppercase">${payLabel}</p>` : ""}
+        <p class="font-black ${isWin ? "text-lg text-orange-600" : displayAmt !== null ? "text-lg text-slate-700" : "text-xs text-slate-400 italic"}">
+          ${displayAmt !== null ? formatC(displayAmt) : "---"}
+        </p>
+        <p class="text-[9px] font-bold uppercase ${payLabel === "ĐANG CHỜ KÊU" ? "text-blue-400" : "opacity-50"}">${payLabel}</p>
       </div>
     </div>`;
   });
@@ -745,6 +769,8 @@ window.addEventListener("DOMContentLoaded", () => {
   } else {
     renderHuiList();
   }
+  // Khởi tạo Google Drive (tự đăng nhập lại nếu đã từng đăng nhập)
+  setTimeout(driveInit, 1200);
 });
 
 // ============================================================

@@ -1,365 +1,197 @@
 /* ============================================
    QUẢN LÝ HỤI - Google Drive Integration
-   Version: 2.0 - Auto Sync
+   Version: 3.0 - Persistent Session
    ============================================ */
 
 "use strict";
 
-const DRIVE_CLIENT_ID = "1051621009021-npiesmnq2j8kj522g00trj1m1t1il7q7.apps.googleusercontent.com";
-const DRIVE_SCOPES    = "https://www.googleapis.com/auth/drive.file";
-const DRIVE_FILE_NAME = "quan_ly_hui_backup.json";
-const DRIVE_TOKEN_KEY = "hui_drive_autosync"; // lưu trạng thái tự đăng nhập
+const DRIVE_CLIENT_ID  = "1051621009021-npiesmnq2j8kj522g00trj1m1t1il7q7.apps.googleusercontent.com";
+const DRIVE_SCOPES     = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_FILE_NAME  = "quan_ly_hui_backup.json";
+const DRIVE_LOGGED_KEY = "hui_drive_logged";
+const DRIVE_TOKEN_KEY  = "hui_drive_token";
+const DRIVE_EMAIL_KEY  = "hui_drive_email";
+const DRIVE_FILEID_KEY = "hui_drive_fileid";
 
-let driveAccessToken  = null;
-let driveFileId       = null;
-let _driveTokenClient = null;
-let _syncTimer        = null;   // debounce timer
-let _isSyncing        = false;
+let _syncTimer = null;
+let _isSyncing = false;
+
+const _el = (id) => document.getElementById(id);
+const getToken  = () => sessionStorage.getItem(DRIVE_TOKEN_KEY);
+const setToken  = (t) => sessionStorage.setItem(DRIVE_TOKEN_KEY, t);
+const getFileId = () => sessionStorage.getItem(DRIVE_FILEID_KEY);
 
 // ============================================================
-// ĐĂNG NHẬP
+// KHỞI TẠO - gọi khi DOMContentLoaded
 // ============================================================
-function driveLogin() {
-  if (!window.google) {
-    showToast("Đang tải Google SDK, thử lại sau giây lát...", "warn");
+function driveInit() {
+  // Token còn trong sessionStorage (cùng tab/reload) => dùng luôn
+  if (getToken()) {
+    _applyLoggedInUI(sessionStorage.getItem(DRIVE_EMAIL_KEY) || "Đã kết nối Drive");
     return;
   }
-  if (!_driveTokenClient) {
-    _driveTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: DRIVE_CLIENT_ID,
-      scope: DRIVE_SCOPES,
-      callback: (resp) => {
-        if (resp.error) { showToast("Đăng nhập thất bại: " + resp.error, "error"); return; }
-        driveAccessToken = resp.access_token;
-        localStorage.setItem(DRIVE_TOKEN_KEY, "1");
-        onDriveLoggedIn();
-      },
-    });
+  // Đã từng đăng nhập trước đây => thử silent refresh
+  if (localStorage.getItem(DRIVE_LOGGED_KEY)) {
+    _driveRefreshSilent();
   }
-  _driveTokenClient.requestAccessToken();
 }
 
-async function onDriveLoggedIn() {
-  try {
-    const res  = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-      headers: { Authorization: "Bearer " + driveAccessToken },
-    });
-    const info = await res.json();
-    const el   = document.getElementById("drive-user-info");
-    el.innerText = "☁️ " + (info.email || "Đã kết nối Drive");
-    el.classList.remove("hidden");
-  } catch {}
-
-  document.getElementById("btn-drive-login").classList.add("hidden");
-  document.getElementById("btn-drive-save").classList.remove("hidden");
-  document.getElementById("btn-drive-load").classList.remove("hidden");
-  document.getElementById("btn-drive-logout").classList.remove("hidden");
-
-  showToast("Đã kết nối Drive — tự động lưu mỗi thao tác!", "success", 4000);
-  await driveFindFile();
+function _driveRefreshSilent() {
+  if (!window.google) { setTimeout(_driveRefreshSilent, 1000); return; }
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: DRIVE_CLIENT_ID,
+    scope: DRIVE_SCOPES,
+    prompt: "",
+    callback: async (resp) => {
+      if (!resp || !resp.access_token) return; // silent fail - im lặng
+      setToken(resp.access_token);
+      const email = await _fetchUserInfo(resp.access_token);
+      sessionStorage.setItem(DRIVE_EMAIL_KEY, email);
+      _applyLoggedInUI(email);
+      if (!getFileId()) _driveFindFile();
+    },
+  });
+  try { client.requestAccessToken({ prompt: "" }); } catch {}
 }
 
+function _applyLoggedInUI(email) {
+  _el("btn-drive-login") && _el("btn-drive-login").classList.add("hidden");
+  _el("btn-drive-save")  && _el("btn-drive-save").classList.remove("hidden");
+  _el("btn-drive-load")  && _el("btn-drive-load").classList.remove("hidden");
+  _el("btn-drive-logout")&& _el("btn-drive-logout").classList.remove("hidden");
+  const info = _el("drive-user-info");
+  if (info) { info.innerText = "☁️ " + email; info.classList.remove("hidden"); }
+  _updateDriveStatusIcon(true);
+}
+
+// ============================================================
+// ICON DRIVE trong header màn hình chi tiết
+// ============================================================
+function _updateDriveStatusIcon(connected) {
+  const icon = _el("detail-drive-icon");
+  if (!icon) return;
+  icon.innerText = connected ? "☁️" : "⚡";
+  icon.title     = connected ? "Google Drive đã kết nối" : "Google Drive chưa kết nối";
+  icon.style.opacity = connected ? "1" : "0.35";
+}
+
+function updateDetailDriveIcon() {
+  _updateDriveStatusIcon(!!getToken());
+}
+
+// ============================================================
+// ĐĂNG NHẬP THỦ CÔNG
+// ============================================================
+function driveLogin() {
+  if (!window.google) { showToast("Đang tải Google SDK...", "warn"); return; }
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: DRIVE_CLIENT_ID,
+    scope: DRIVE_SCOPES,
+    prompt: "select_account",
+    callback: async (resp) => {
+      if (!resp || !resp.access_token) { showToast("Đăng nhập thất bại!", "error"); return; }
+      setToken(resp.access_token);
+      localStorage.setItem(DRIVE_LOGGED_KEY, "1");
+      const email = await _fetchUserInfo(resp.access_token);
+      sessionStorage.setItem(DRIVE_EMAIL_KEY, email);
+      _applyLoggedInUI(email);
+      await _driveFindFile();
+      showToast("✅ Đã kết nối Drive — tự động lưu!", "success", 4000);
+    },
+  });
+  client.requestAccessToken({ prompt: "select_account" });
+}
+
+// ============================================================
+// ĐĂNG XUẤT
+// ============================================================
 function driveLogout() {
-  driveAccessToken = null;
-  driveFileId      = null;
-  localStorage.removeItem(DRIVE_TOKEN_KEY);
-  if (_driveTokenClient) google.accounts.oauth2.revoke(driveAccessToken, () => {});
+  sessionStorage.removeItem(DRIVE_TOKEN_KEY);
+  sessionStorage.removeItem(DRIVE_EMAIL_KEY);
+  sessionStorage.removeItem(DRIVE_FILEID_KEY);
+  localStorage.removeItem(DRIVE_LOGGED_KEY);
 
-  document.getElementById("btn-drive-login").classList.remove("hidden");
-  document.getElementById("btn-drive-save").classList.add("hidden");
-  document.getElementById("btn-drive-load").classList.add("hidden");
-  document.getElementById("btn-drive-logout").classList.add("hidden");
-  const el = document.getElementById("drive-user-info");
-  el.classList.add("hidden");
-  el.innerText = "";
+  _el("btn-drive-login") && _el("btn-drive-login").classList.remove("hidden");
+  _el("btn-drive-save")  && _el("btn-drive-save").classList.add("hidden");
+  _el("btn-drive-load")  && _el("btn-drive-load").classList.add("hidden");
+  _el("btn-drive-logout")&& _el("btn-drive-logout").classList.add("hidden");
+  const info = _el("drive-user-info");
+  if (info) { info.classList.add("hidden"); info.innerText = ""; }
+  _updateDriveStatusIcon(false);
   showToast("Đã đăng xuất Drive", "info");
-}
-
-// ============================================================
-// TỰ ĐỘNG ĐỒNG BỘ (gọi từ save())
-// ============================================================
-function driveAutoSync() {
-  if (!driveAccessToken) return; // chưa đăng nhập → bỏ qua
-
-  // Debounce: huỷ timer cũ, đặt timer mới 2.5 giây
-  clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(async () => {
-    if (_isSyncing) return;
-    _isSyncing = true;
-    setSyncStatus("syncing");
-    try {
-      await drivePush();
-      setSyncStatus("ok");
-    } catch (e) {
-      setSyncStatus("error");
-      console.error("Auto-sync error:", e);
-    } finally {
-      _isSyncing = false;
-    }
-  }, 2500);
-}
-
-// Hiển thị trạng thái đồng bộ nhỏ bên cạnh email
-function setSyncStatus(status) {
-  const el = document.getElementById("drive-sync-status");
-  if (!el) return;
-  const map = {
-    syncing: { text: "⏳ Đang lưu...",  color: "text-yellow-300" },
-    ok:      { text: "✅ Đã lưu Drive", color: "text-green-300"  },
-    error:   { text: "❌ Lỗi lưu Drive",color: "text-red-300"   },
-  };
-  const s = map[status];
-  el.innerText  = s.text;
-  el.className  = `text-[9px] font-bold mt-1 ${s.color}`;
-  el.classList.remove("hidden");
-  if (status === "ok") setTimeout(() => el.classList.add("hidden"), 3000);
 }
 
 // ============================================================
 // TÌM FILE TRÊN DRIVE
 // ============================================================
-async function driveFindFile() {
+async function _driveFindFile() {
+  const token = getToken(); if (!token) return;
   try {
     const q   = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)`,
-      { headers: { Authorization: "Bearer " + driveAccessToken } }
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)`,
+      { headers: { Authorization: "Bearer " + token } }
     );
     const data = await res.json();
-    if (data.files && data.files.length > 0) {
-      driveFileId = data.files[0].id;
-      const modified = new Date(data.files[0].modifiedTime).toLocaleString("vi-VN");
-      showToast(`Tìm thấy backup Drive (${modified})`, "info", 4000);
-    }
-  } catch (e) {
-    console.error("driveFindFile:", e);
-  }
-}
-
-// ============================================================
-// LƯU LÊN DRIVE (dùng cho cả auto-sync và nút thủ công)
-// ============================================================
-async function drivePush() {
-  const content = JSON.stringify(state.allHuis, null, 2);
-  const blob    = new Blob([content], { type: "application/json" });
-  if (driveFileId) {
-    await driveUpdateFile(driveFileId, blob);
-  } else {
-    driveFileId = await driveCreateFile(blob);
-  }
-}
-
-async function driveSave() {
-  if (!driveAccessToken) { showToast("Chưa đăng nhập Drive!", "warn"); return; }
-  setSyncStatus("syncing");
-  try {
-    await drivePush();
-    setSyncStatus("ok");
-    showToast("✅ Đã lưu Drive!", "success");
-  } catch (e) {
-    setSyncStatus("error");
-    showToast("Lỗi khi lưu Drive: " + e.message, "error");
-  }
-}
-
-async function driveCreateFile(blob) {
-  const meta = JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json" });
-  const form = new FormData();
-  form.append("metadata", new Blob([meta], { type: "application/json" }));
-  form.append("file", blob);
-  const res  = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-    { method: "POST", headers: { Authorization: "Bearer " + driveAccessToken }, body: form }
-  );
-  const data = await res.json();
-  if (!data.id) throw new Error(JSON.stringify(data));
-  return data.id;
-}
-
-async function driveUpdateFile(fileId, blob) {
-  const res  = await fetch(
-    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
-    {
-      method: "PATCH",
-      headers: { Authorization: "Bearer " + driveAccessToken, "Content-Type": "application/json" },
-      body: blob,
-    }
-  );
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-}
-
-// ============================================================
-// TẢI TỪ DRIVE
-// ============================================================
-async function driveLoad() {
-  if (!driveAccessToken) { showToast("Chưa đăng nhập Drive!", "warn"); return; }
-  if (!driveFileId)      { showToast("Không tìm thấy file backup trên Drive!", "warn"); return; }
-
-  showToast("Đang tải từ Drive...", "info", 2000);
-  try {
-    const res  = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
-      { headers: { Authorization: "Bearer " + driveAccessToken } }
-    );
-    const data = await res.json();
-    if (!Array.isArray(data)) throw new Error("Dữ liệu không hợp lệ");
-
-    showConfirmPopup(
-      "Tải dữ liệu từ Drive sẽ ghi đè dữ liệu hiện tại. Tiếp tục?",
-      () => {
-        state.allHuis = data;
-        save();
-        renderHuiList();
-        showToast("✅ Đã khôi phục từ Drive!", "success");
-      },
-      "Tải về", "bg-yellow-500"
-    );
-  } catch (e) {
-    showToast("Lỗi khi tải Drive: " + e.message, "error");
-  }
-}
-
-
-// ============================================================
-// ĐĂNG NHẬP
-// ============================================================
-function driveLogin() {
-  if (!window.google) {
-    showToast("Đang tải Google SDK, thử lại sau giây lát...", "warn");
-    return;
-  }
-
-  const client = google.accounts.oauth2.initTokenClient({
-    client_id: DRIVE_CLIENT_ID,
-    scope: DRIVE_SCOPES,
-    callback: (resp) => {
-      if (resp.error) {
-        showToast("Đăng nhập thất bại: " + resp.error, "error");
-        return;
-      }
-      driveAccessToken = resp.access_token;
-      onDriveLoggedIn();
-    },
-  });
-  client.requestAccessToken();
-}
-
-async function onDriveLoggedIn() {
-  // Lấy thông tin người dùng
-  try {
-    const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-      headers: { Authorization: "Bearer " + driveAccessToken },
-    });
-    const info = await res.json();
-    const emailEl = document.getElementById("drive-user-info");
-    emailEl.innerText = "☁️ " + (info.email || "Đã kết nối Drive");
-    emailEl.classList.remove("hidden");
+    if (data.files && data.files.length > 0)
+      sessionStorage.setItem(DRIVE_FILEID_KEY, data.files[0].id);
   } catch {}
-
-  // Cập nhật UI buttons
-  document.getElementById("btn-drive-login").classList.add("hidden");
-  document.getElementById("btn-drive-save").classList.remove("hidden");
-  document.getElementById("btn-drive-load").classList.remove("hidden");
-  document.getElementById("btn-drive-logout").classList.remove("hidden");
-
-  showToast("Đã kết nối Google Drive!", "success");
-
-  // Tự tìm file backup cũ nếu có
-  await driveFindFile();
-}
-
-function driveLogout() {
-  driveAccessToken = null;
-  driveFileId = null;
-  document.getElementById("btn-drive-login").classList.remove("hidden");
-  document.getElementById("btn-drive-save").classList.add("hidden");
-  document.getElementById("btn-drive-load").classList.add("hidden");
-  document.getElementById("btn-drive-logout").classList.add("hidden");
-  const emailEl = document.getElementById("drive-user-info");
-  emailEl.classList.add("hidden");
-  emailEl.innerText = "";
-  showToast("Đã đăng xuất Drive", "info");
 }
 
 // ============================================================
-// TÌM FILE BACKUP TRÊN DRIVE
+// AUTO SYNC (debounce 2.5s) - gọi từ save()
 // ============================================================
-async function driveFindFile() {
-  try {
-    const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)`,
-      { headers: { Authorization: "Bearer " + driveAccessToken } }
-    );
-    const data = await res.json();
-    if (data.files && data.files.length > 0) {
-      driveFileId = data.files[0].id;
-      const modified = new Date(data.files[0].modifiedTime).toLocaleString("vi-VN");
-      showToast(`Tìm thấy backup Drive (${modified})`, "info", 4000);
-    }
-  } catch (e) {
-    console.error("driveFindFile:", e);
-  }
+function driveAutoSync() {
+  if (!getToken()) return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(async () => {
+    if (_isSyncing) return;
+    _isSyncing = true; _setSyncStatus("syncing");
+    try   { await _drivePush(); _setSyncStatus("ok"); }
+    catch { _setSyncStatus("error"); }
+    finally { _isSyncing = false; }
+  }, 2500);
+}
+
+function _setSyncStatus(s) {
+  const el = _el("drive-sync-status"); if (!el) return;
+  const map = { syncing:["⏳ Đang lưu...","text-yellow-300"], ok:["✅ Đã lưu Drive","text-green-300"], error:["❌ Lỗi lưu Drive","text-red-300"] };
+  el.innerText = map[s][0]; el.className = `text-[9px] font-bold mt-1 ${map[s][1]}`; el.classList.remove("hidden");
+  if (s === "ok") setTimeout(() => el.classList.add("hidden"), 3000);
 }
 
 // ============================================================
-// LƯU LÊN DRIVE
+// LƯU THỦ CÔNG
 // ============================================================
 async function driveSave() {
-  if (!driveAccessToken) { showToast("Chưa đăng nhập Drive!", "warn"); return; }
-
-  showToast("Đang lưu lên Drive...", "info", 2000);
-
-  const content = JSON.stringify(state.allHuis, null, 2);
-  const blob = new Blob([content], { type: "application/json" });
-
-  try {
-    if (driveFileId) {
-      // Cập nhật file cũ
-      await driveUpdateFile(driveFileId, blob);
-    } else {
-      // Tạo file mới
-      driveFileId = await driveCreateFile(blob);
-    }
-    const now = new Date().toLocaleString("vi-VN");
-    showToast(`✅ Đã lưu Drive lúc ${now}`, "success", 4000);
-  } catch (e) {
-    showToast("Lỗi khi lưu Drive: " + e.message, "error");
-  }
+  if (!getToken()) { showToast("Chưa đăng nhập Drive!", "warn"); return; }
+  _setSyncStatus("syncing");
+  try { await _drivePush(); _setSyncStatus("ok"); showToast("✅ Đã lưu Drive!", "success"); }
+  catch (e) { _setSyncStatus("error"); showToast("Lỗi: " + e.message, "error"); }
 }
 
-async function driveCreateFile(blob) {
-  const meta = JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json" });
-  const form = new FormData();
-  form.append("metadata", new Blob([meta], { type: "application/json" }));
-  form.append("file", blob);
+async function _drivePush() {
+  const token  = getToken();
+  const blob   = new Blob([JSON.stringify(state.allHuis, null, 2)], { type: "application/json" });
+  const fileId = getFileId();
+  if (fileId) { await _driveUpdateFile(fileId, blob, token); }
+  else        { sessionStorage.setItem(DRIVE_FILEID_KEY, await _driveCreateFile(blob, token)); }
+}
 
-  const res = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
-    {
-      method: "POST",
-      headers: { Authorization: "Bearer " + driveAccessToken },
-      body: form,
-    }
-  );
+async function _driveCreateFile(blob, token) {
+  const form = new FormData();
+  form.append("metadata", new Blob([JSON.stringify({ name: DRIVE_FILE_NAME, mimeType: "application/json" })], { type: "application/json" }));
+  form.append("file", blob);
+  const res  = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+    { method: "POST", headers: { Authorization: "Bearer " + token }, body: form });
   const data = await res.json();
   if (!data.id) throw new Error(JSON.stringify(data));
   return data.id;
 }
 
-async function driveUpdateFile(fileId, blob) {
-  const res = await fetch(
-    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: "Bearer " + driveAccessToken,
-        "Content-Type": "application/json",
-      },
-      body: blob,
-    }
-  );
+async function _driveUpdateFile(fileId, blob, token) {
+  const res  = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
+    { method: "PATCH", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: blob });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
 }
@@ -368,36 +200,24 @@ async function driveUpdateFile(fileId, blob) {
 // TẢI TỪ DRIVE
 // ============================================================
 async function driveLoad() {
-  if (!driveAccessToken) { showToast("Chưa đăng nhập Drive!", "warn"); return; }
-
-  if (!driveFileId) {
-    showToast("Không tìm thấy file backup trên Drive!", "warn");
-    return;
-  }
-
+  const token = getToken(), fileId = getFileId();
+  if (!token)  { showToast("Chưa đăng nhập Drive!", "warn"); return; }
+  if (!fileId) { showToast("Không tìm thấy file backup!", "warn"); return; }
   showToast("Đang tải từ Drive...", "info", 2000);
-
   try {
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
-      { headers: { Authorization: "Bearer " + driveAccessToken } }
-    );
+    const res  = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      { headers: { Authorization: "Bearer " + token } });
     const data = await res.json();
-
     if (!Array.isArray(data)) throw new Error("Dữ liệu không hợp lệ");
+    showConfirmPopup("Tải dữ liệu từ Drive sẽ ghi đè dữ liệu hiện tại. Tiếp tục?",
+      () => { state.allHuis = data; save(); renderHuiList(); showToast("✅ Đã khôi phục từ Drive!", "success"); },
+      "Tải về", "bg-yellow-500");
+  } catch (e) { showToast("Lỗi: " + e.message, "error"); }
+}
 
-    showConfirmPopup(
-      `Tải dữ liệu từ Drive sẽ ghi đè dữ liệu hiện tại. Tiếp tục?`,
-      () => {
-        state.allHuis = data;
-        save();
-        renderHuiList();
-        showToast("✅ Đã khôi phục từ Drive!", "success");
-      },
-      "Tải về",
-      "bg-yellow-500"
-    );
-  } catch (e) {
-    showToast("Lỗi khi tải Drive: " + e.message, "error");
-  }
+async function _fetchUserInfo(token) {
+  try {
+    const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: "Bearer " + token } });
+    const d = await r.json(); return d.email || "Đã kết nối Drive";
+  } catch { return "Đã kết nối Drive"; }
 }
